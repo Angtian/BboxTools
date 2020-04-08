@@ -2,8 +2,8 @@ from setuptools import setup
 
 setup(
     name='BboxTools',
-    version='1.0.0',
-    packages=['numpy'],
+    version='1.0.1',
+    packages=[],
     url='',
     license='',
     author='Angtian Wang',
