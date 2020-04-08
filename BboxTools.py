@@ -463,15 +463,15 @@ class Bbox2D(object):
                         Tensor. Acceptable shape:
                                 image       |               value
                         -------------------------------------------------------
-                        ndarry: (W, H)      |  int; float; ndarray (w, h)
-                        ndarry: (W, H, c)   |  int; float; ndarray (w, h, c)
-                        Tensor: (W, H)      |  int; float; Tensor (w, h)
-                        Tensor: (c, W, H)   |  int; float; Tensor (w, h); Tensor (c, w, h)
-                        Tensor: (n, c, W, H)|  int; float; Tensor (w, h); Tensor (c, w, h); Tensor (n, c, w, h)
+                        ndarry: (H, W)      |  int; float; ndarray (h, w)
+                        ndarry: (H, W, c)   |  int; float; ndarray (h, w, c)
+                        Tensor: (H, W)      |  int; float; Tensor (h, w)
+                        Tensor: (c, H, W)   |  int; float; Tensor (h, w); Tensor (c, h, w)
+                        Tensor: (n, c, H, W)|  int; float; Tensor (h, w); Tensor (c, h, w); Tensor (n, c, h, w)
 
         :param auto_fit: (bool) Whether automatically resize the value to be proper to fit into the target patch, only
                         take effects when value is ndarray or Tensor.
-                        When disabled, (w, h) of Value must fit the shape of bbox.
+                        When disabled, (h, w) of Value must fit the shape of bbox.
                         When enabled, the value will be interpolated to spatial shape as this bbox. cv2.resize is used
                         for interpolation of ndarray (default interpolation method: cv2.INTER_AREA),
                         torch.nn.function.interpolate is used for interpolation of Tensor (default interpolation method:
@@ -489,7 +489,7 @@ class Bbox2D(object):
             image_boundary_ = image.shape[0:2]
         elif enable_pytorch and type(image) == torch.Tensor:
             type_ = 'torch'
-            image_boundary_ = image.shape[-2::]
+            image_boundary_ = tuple(image.shape[-2::])
         else:
             raise Exception('Image must be either np.ndarray or torch.Tensor, got %s.' % str(type(image)))
 
@@ -508,7 +508,7 @@ class Bbox2D(object):
                     outshape = cropped_self.shape + image.shape[2::]
                 value = np.ones(outshape, dtype=image.dtype) * value
             else:
-                outshape = (image.shape[0:-2], ) + cropped_self.shape
+                outshape = tuple(image.shape[0:-2]) + cropped_self.shape
                 value = torch.ones(outshape, dtype=image.dtype).to(image.device) * value
 
         elif type_ == 'numpy' and (not cropped_self.shape == value.shape[0:2]):
@@ -523,7 +523,7 @@ class Bbox2D(object):
 
         elif type_ == 'torch' and (not cropped_self.shape == value.shape[-2::]):
             if auto_fit:
-                outshape = (value.shape[0:-2], ) + cropped_self.shape
+                outshape = tuple(value.shape[0:-2]) + cropped_self.shape
 
                 if len(value.shape) == 2:
                     value = value.unsqueeze(0)
