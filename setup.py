@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name='BboxTools',
     version='1.0.0',
-    packages=[''],
+    packages=['numpy'],
     url='',
     license='',
     author='Angtian Wang',

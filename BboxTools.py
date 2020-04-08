@@ -1,3 +1,7 @@
+# coding=utf-8
+# Author: Angtian Wang
+# Email: angtianwang@gmail.com
+
 import numpy as np
 
 try:
@@ -14,17 +18,22 @@ try:
     from PIL import ImageDraw
 
     enable_PIL = True
-    if enable_PIL:
-        font = ImageFont.truetype('times.ttf', size=14)
-    else:
-        font = None
 except:
     enable_PIL = False
 
+set_enable_pytorch = True
 
-def change_default_font(font_):
-    global font
-    font = font_
+if set_enable_pytorch:
+    try:
+        import torch
+
+        enable_pytorch = True
+
+        resize_method_torch = 'bilinear'
+    except:
+        enable_pytorch = False
+else:
+    enable_pytorch = False
 
 
 class Bbox2D(object):
@@ -149,11 +158,23 @@ class Bbox2D(object):
             if self_.boundary:
                 self_.boundary = (int(self_.boundary[0] * other), int(self_.boundary[1] * other))
             return self_
+        elif (type(other) == tuple or type(other) == list) and len(other) == 2:
+            self_ = self.copy()
+            for i, tem in enumerate(other):
+                if type(tem) != int and type(tem) != float:
+                    raise Exception('Input must be int or float, got %s' % str(other))
+                if tem < 0:
+                    raise Exception('Input must be positive! Got ' + str(other))
+                self_.bbox[i] = (int(self_.bbox[i][0] * tem), int(self_.bbox[i][1] * tem))
+            return self_
         else:
-            raise Exception('Multiply method only support int or float input!')
+            raise Exception('Multiply method only support int or float input, got %s' % str(other))
 
     def __copy__(self):
-        return Bbox2D(self.bbox, self.boundary)
+        out = Bbox2D(self.bbox, self.boundary)
+        for attr in self.attributes.keys():
+            out.__setattr__(attr, self.attributes[attr])
+        return out
 
     def __str__(self):
         if not self.bbox:
@@ -199,7 +220,7 @@ class Bbox2D(object):
         if item == 'bbox':
             return self.bbox
         if item == 'boundary':
-            return self.boundary
+            return tuple(self.boundary)
         return self.attributes[item]
 
     @property
@@ -259,16 +280,31 @@ class Bbox2D(object):
             self.attributes[str(k)] = v
 
     def copy(self):
-        return Bbox2D(self.bbox, self.boundary)
+        return self.__copy__()
 
-    def if_include(self, other):
-        out = True
-        for i in range(2):
-            if self.bbox[i][0] > other.bbox[i][0]:
-                out = False
-            if self.bbox[i][1] < other.bbox[i][1]:
-                out = False
-        return out
+    def include(self, other):
+        """
+        Check if other is inside this box. Notice include means strictly include, other could not place at the boundary
+        of this bbox.
+        :param other: (Bbox2D or tuple of int) bbox or point
+        :return: (bool) True or False
+        """
+        if type(other) == Bbox2D:
+            out = True
+            for i in range(2):
+                if self.bbox[i][0] > other.bbox[i][0]:
+                    out = False
+                if self.bbox[i][1] < other.bbox[i][1]:
+                    out = False
+            return out
+
+        if type(other) == tuple and len(other) == 2:
+            if other[0] < self.bbox[0][0] or other[0] >= self.bbox[0][1]:
+                return False
+            if other[1] < self.bbox[1][0] or other[1] >= self.bbox[1][1]:
+                return False
+            return True
+        raise Exception('Include method suppose to be point or bbox, but got %s' % str(other))
 
     def exclude(self, other, axis):
         out = self.copy()
@@ -283,13 +319,6 @@ class Bbox2D(object):
         if not out.check_box():
             self.illegal_bbox_exception()
         return out
-
-    def inside(self, point):
-        if point[0] < self.bbox[0][0] or point[0] >= self.bbox[0][1]:
-            return False
-        if point[1] < self.bbox[1][0] or point[1] >= self.bbox[1][1]:
-            return False
-        return True
 
     def set_bbox(self, bbox, check=True):
         if not bbox:
@@ -378,27 +407,142 @@ class Bbox2D(object):
             raise Exception('Empty boundary box!')
 
     def apply(self, image, copy=False):
+        """
+        Crop image by this bbox. The output size would be: h_out, w_out = self.size.
+        Examples:
+            >>> a = np.arange(9).reshape((3, 3))
+            >>> a
+            array([[0, 1, 2],
+                   [3, 4, 5],
+                   [6, 7, 8]])
+            >>> bbt.Bbox2D([(0, 2), (1, 3)]).apply(a)
+            array([[1, 2],
+                   [4, 5]])
+        :param image: (np.ndarray or torch.Tensor) Source image. ndarray should have shape (h, w) or (h, w, c)
+                        Tensor should have shape (h, w) or (c, h, w) or (n, c, h, w)
+        :param copy: (bool) Whether copy the cropped image
+        :return: (np.ndarray or torch.Tensor) crop image
+        """
+        if type(image) == np.ndarray:
+            type_ = 'numpy'
+        elif enable_pytorch and type(image) == torch.Tensor:
+            type_ = 'torch'
+        else:
+            raise Exception('Image must be either np.ndarray or torch.Tensor, got %s.' % str(type(image)))
+
         if copy:
-            return _apply_bbox(image, self.bbox).copy()
-        return _apply_bbox(image, self.bbox)
+            if type_ == 'numpy':
+                return _apply_bbox(image, self.bbox, mode=type_).copy()
+            else:
+                return _apply_bbox(image, self.bbox, mode=type_).contiguous().clone()
+        return _apply_bbox(image, self.bbox, mode=type_)
 
     def assign(self, image, value, auto_fit=True):
-        if type(value) == int:
-            if len(image.shape) == 2:
-                outshape = self.shape
+        """
+        Fill in-box-area of the image with given value. Notice instead of checking whether the bbox is out of boundary
+        of the image when boundary of this bbox is None, this function will temporarily set the bbox to be limited
+        inside the image boundary, which might cause a Unpaired shape error when auto_fit is disabled, or might have
+        unexpected manner when auto_fit is enabled. Thus, a bbox with boundary is strongly suggested.
+        Examples:
+        >>> a = np.zeros((3, 3))
+        >>> a
+        array([[0., 0., 0.],
+               [0., 0., 0.],
+               [0., 0., 0.]])
+        >>> bbt.Bbox2D([(0, 1), (1, 3)], image_boundary=a.shape).assign(a, 1)
+        >>> a
+        array([[0., 1., 1.],
+               [0., 0., 0.],
+               [0., 0., 0.]])
+
+        :param image: (np.ndarray or torch.Tensor) Source image ndarray should have shape (h, w) or (h, w, c)
+                        Tensor should have shape (h, w) or (c, h, w) or (n, c, h, w)
+        :param value: (int or float or np.ndarray or torch.Tensor) Value to fill the patch.
+                        Int and float can assign to both np.ndarray and torch.Tensor. ndarray can only be assign to
+                        ndarray, Tensor can only be assign to Tensor. Value Tensor must have less dimensions than image
+                        Tensor. Acceptable shape:
+                                image       |               value
+                        -------------------------------------------------------
+                        ndarry: (W, H)      |  int; float; ndarray (w, h)
+                        ndarry: (W, H, c)   |  int; float; ndarray (w, h, c)
+                        Tensor: (W, H)      |  int; float; Tensor (w, h)
+                        Tensor: (c, W, H)   |  int; float; Tensor (w, h); Tensor (c, w, h)
+                        Tensor: (n, c, W, H)|  int; float; Tensor (w, h); Tensor (c, w, h); Tensor (n, c, w, h)
+
+        :param auto_fit: (bool) Whether automatically resize the value to be proper to fit into the target patch, only
+                        take effects when value is ndarray or Tensor.
+                        When disabled, (w, h) of Value must fit the shape of bbox.
+                        When enabled, the value will be interpolated to spatial shape as this bbox. cv2.resize is used
+                        for interpolation of ndarray (default interpolation method: cv2.INTER_AREA),
+                        torch.nn.function.interpolate is used for interpolation of Tensor (default interpolation method:
+                        'bilinear'). To change the interpolation method:
+                        >>> bbt.resize_method_torch = 'nearest'
+                        >>> bbt.resize_method = cv2.INTER_NEAREST
+
+        :return: None
+        """
+        if type(image) != type(value) and not (type(value) == int or type(value) == float):
+            raise Exception('Image type and value type are not matched, image: %s, value: %s' % (str(type(image)), str(type(value))))
+
+        if type(image) == np.ndarray:
+            type_ = 'numpy'
+            image_boundary_ = image.shape[0:2]
+        elif enable_pytorch and type(image) == torch.Tensor:
+            type_ = 'torch'
+            image_boundary_ = image.shape[-2::]
+        else:
+            raise Exception('Image must be either np.ndarray or torch.Tensor, got %s.' % str(type(image)))
+
+        cropped_self = self.copy()
+        if self.boundary is not None:
+            if tuple(self.boundary) != image_boundary_:
+                raise Exception('Bbox boundary %s does not fit image shape %s!' % (str(self.boundary), str(image_boundary_)))
+        else:
+            self.set_boundary(image_boundary_)
+
+        if type(value) == int or type(value) == float:
+            if type_ == 'numpy':
+                if len(image.shape) == 2:
+                    outshape = cropped_self.shape
+                else:
+                    outshape = cropped_self.shape + image.shape[2::]
+                value = np.ones(outshape, dtype=image.dtype) * value
             else:
-                outshape = self.shape + image.shape[2::]
-            value = np.ones(outshape, dtype=image.dtype) * value
-        elif not self.shape == value.shape[0:2]:
+                outshape = (image.shape[0:-2], ) + cropped_self.shape
+                value = torch.ones(outshape, dtype=image.dtype).to(image.device) * value
+
+        elif type_ == 'numpy' and (not cropped_self.shape == value.shape[0:2]):
             if auto_fit:
                 if enable_vc2:
-                    value = cv2.resize(value, (self.shape[1], self.shape[0]), interpolation=resize_method)
+                    value = cv2.resize(value, (cropped_self.shape[1], cropped_self.shape[0]), interpolation=resize_method)
                 else:
                     raise Exception('Unable to import opencv for resize unpaired image to shape of bbox, box shape: '
-                                    + str(self.shape) + ' image shape: ' + str(value.shape))
+                                    + str(cropped_self.shape) + ' image shape: ' + str(value.shape))
             else:
-                raise Exception('Unpaired shape: box shape: ' + str(self.shape) + ' image shape: ' + str(value.shape))
-        _assign_bbox(image, value, self.bbox)
+                raise Exception('Unpaired shape: box shape: ' + str(cropped_self.shape) + ' image shape: ' + str(value.shape))
+
+        elif type_ == 'torch' and (not cropped_self.shape == value.shape[-2::]):
+            if auto_fit:
+                outshape = (value.shape[0:-2], ) + cropped_self.shape
+
+                if len(value.shape) == 2:
+                    value = value.unsqueeze(0)
+                if len(value.shape) == 3:
+                    value = value.unsqueeze(0)
+
+                value = torch.nn.functional.interpolate(value, size=cropped_self.shape, mode=resize_method_torch)
+                value = value.view(outshape)
+            else:
+                raise Exception('Unpaired shape: box shape: ' + str(cropped_self.shape) + ' image shape: ' + str(value.shape))
+
+        # pair dimension of value and image. i,e. (5, 5) -> (1, 5, 5)
+        if type_ == 'torch' and len(value.shape) < len(image.shape):
+            for _ in range(len(image.shape) - len(value.shape)):
+                value = value.unsqueeze(0)
+        elif type_ == 'torch' and len(value.shape) > len(image.shape):
+            raise Exception('Image should have more dimensions than value, Image has %d, Value has %d' % (len(image.shape), len(value.shape)))
+
+        _assign_bbox(image, value, cropped_self.bbox, mode=type_)
 
     def remove_boundary(self):
         self.boundary = None
@@ -470,6 +614,22 @@ def box_by_shape(shape, center, image_boundary=None):
 
 
 def from_numpy(bbox, image_boundary=None, sorts=('y0', 'y1', 'x0', 'x1'), load_boundary_if_possible=True):
+    """
+    Create bbox from ndarray.
+    Examples:
+        >>> bbt.from_numpy(np.array([0, 5, 0, 4]))
+        <class "Bbox2D", shape=[(0, 5), (0, 4)]>
+        >>> bbt.from_numpy(np.array([[0, 0, 4, 5, 8, 9]]), sorts=('x0', 'y0', 'x1', 'y1'))
+        [<class "Bbox2D", shape=[(0, 5), (0, 4)], boundary=[8, 9]>]
+
+    :param bbox: (ndarray) array has shape (4, ) or (n, 4) without image boundary, or (6, ) or (n, 6) with image boundary.
+    :param image_boundary: image boundary of bbox, it has higher priority than auto load boundary.
+    :param sorts: the sort of coordinate in ndarray. default: ('y0', 'y1', 'x0', 'x1').
+                  Notes: the default sort of PIL is ('x0', 'y0', 'x1', 'y1').
+    :param load_boundary_if_possible: Automatically assign the boundary of the bbox if input ndarray has shape longer
+                                      than 6.
+    :return: Bbox2D if input ndarray is 1d array, list of Bbox2D if input ndarray is 2d array.
+    """
     if type(bbox) == list:
         bbox = np.array(bbox)
 
@@ -481,13 +641,20 @@ def from_numpy(bbox, image_boundary=None, sorts=('y0', 'y1', 'x0', 'x1'), load_b
         return out_
     bbox = bbox.astype(np.int32)
     box_ = [(bbox[sorts.index('y0')], bbox[sorts.index('y1')]), (bbox[sorts.index('x0')], bbox[sorts.index('x1')])]
-    if (not image_boundary) and load_boundary_if_possible and bbox.size >= 6:
+    if image_boundary is not None and load_boundary_if_possible and bbox.size >= 6:
         image_boundary = [bbox[4], bbox[5]]
     return Bbox2D(box_, image_boundary=image_boundary)
 
 
 def list_box_to_numpy(box_list, save_image_boundary=False, attributes=tuple(), dtype=np.float32):
-    # Current only support scale attributes
+    """
+    Convert a list of Bbox2D to a 2d ndarray.
+    :param box_list: (list) list of Bbox2d
+    :param save_image_boundary: (bool) whether also include the boundary
+    :param attributes: (tuple) attributes of bbox included in output
+    :param dtype: (np dtype) the data type of output
+    :return: 2-d ndarray
+    """
     length = len(box_list)
     if save_image_boundary:
         width = 6 + len(attributes)
@@ -521,8 +688,20 @@ def shift(box, axis, value, force=False):
 
 
 def nonzero(image):
-    non = np.nonzero(image)
-    box = [(int(np.min(non[0])), int(np.max(non[0]))), (int(np.min(non[1])), int(np.max(non[1])))]
+    """
+    Returns a bbox covers all non-zeros part of the image.
+    :param image: for numpy: 2-D ndarray
+                  for torch: 2-D Tensor
+    :return: Bbox2D with boundary
+    """
+    if type(image) == np.ndarray:
+        non = np.nonzero(image)
+        box = [(int(np.min(non[0])), int(np.max(non[0]))), (int(np.min(non[1])), int(np.max(non[1])))]
+    elif enable_pytorch and type(image) == torch.Tensor:
+        non = torch.nonzero(image)
+        box = [(int(torch.min(non[:, 0])), int(torch.max(non[:, 0]))), (int(torch.min(non[:, 1])), int(torch.max(non[:, 1])))]
+    else:
+        raise Exception('Unknown type of input image: %s' % type(image))
     return Bbox2D(bbox=box, image_boundary=image.shape)
 
 
@@ -540,6 +719,7 @@ def draw_bbox(image, box, boundary=None, fill=None, boundary_width=2, text=None)
     """
     Draw bbox on a image. IMPORTANT: input image will be changed, in order to keep original array unchange,
     please use image.copy()
+    Notice current version only support ndarray.
     :param image: (ndarry) 2D image array, with size (W, H) or (W, H, C)
     :param box: (Bbox2D) box need to draw
     :param boundary: (list or tuple) boundary color, can be (R, G, B) or (R, G, B, A)
@@ -601,11 +781,11 @@ def draw_bbox(image, box, boundary=None, fill=None, boundary_width=2, text=None)
     return image.astype(dtype)
 
 
-def draw_one_annotation(img, position, cate_s):
+def draw_one_annotation(img, position, cate_s, font, backgound_color='white'):
     y, x = position
     draw = ImageDraw.Draw(img)
     w, h = font.getsize(cate_s)
-    draw.rectangle((x, y, x + w, y + h), fill='white')
+    draw.rectangle((x, y, x + w, y + h), fill=backgound_color)
     draw.text((x, y), cate_s, fill=(0, 0, 0), font=font)
 
 
