@@ -58,7 +58,7 @@ class Bbox2D(object):
         return 2
 
     def __getitem__(self, item):
-        if not self.bbox:
+        if self.if_empty():
             raise Exception('Cannot get item from empty box!')
         if item == 'x' or item == 0:
             return tuple(self.bbox[0])
@@ -69,24 +69,10 @@ class Bbox2D(object):
                 raise Exception(' Input index out of range, which should be 0,1 but get: ' + str(item))
             raise Exception('Illegal index!')
 
-    def __add__(self, other):
-        output = self.copy()
-        if type(other) == list:
-            if len(other) != 2:
-                raise Exception('Invaild input!')
-            if type(other[0]) == list or type(other[0]) == tuple:
-                for i in range(2):
-                    for j in range(2):
-                        output.one_point(2, 2, other[i][j], change=True)
-            else:
-                output.shift([0, 1], other)
-        if type(other) == Bbox2D:
-            for i in range(2):
-                for j in range(2):
-                    output.one_point(2, 2, other[i][j], change=True)
-        return output
-
     def __eq__(self, other):
+        if self.if_empty() or other.if_empty():
+            return self.if_empty() == other.if_empty()
+
         for i in range(2):
             if not self.bbox[i][0] == other.bbox[i][0]:
                 return False
@@ -95,10 +81,10 @@ class Bbox2D(object):
         return True
 
     def __or__(self, other):
-        if not self.bbox:
-            return other.copy()
-        if not other.bbox:
+        if self.if_empty():
             return self.copy()
+        if other.if_empty():
+            return other.copy()
 
         tem = []
         for i in range(2):
@@ -117,9 +103,9 @@ class Bbox2D(object):
         return Bbox2D(tem, boundary)
 
     def __and__(self, other):
-        if not self.bbox:
+        if self.if_empty():
             return self.copy()
-        if not other.bbox:
+        if other.if_empty():
             return other.copy()
 
         tem = []
@@ -146,6 +132,8 @@ class Bbox2D(object):
         return Bbox2D(tem, boundary)
 
     def __mul__(self, other):
+        if self.if_empty():
+            return empty()
         if type(other) == int or type(other) == float:
             if other < 0:
                 raise Exception('Input must be positive! Got ' + str(other))
@@ -171,13 +159,15 @@ class Bbox2D(object):
             raise Exception('Multiply method only support int or float input, got %s' % str(other))
 
     def __copy__(self):
+        if self.if_empty():
+            return empty()
         out = Bbox2D(self.bbox, self.boundary)
         for attr in self.attributes.keys():
             out.__setattr__(attr, self.attributes[attr])
         return out
 
     def __str__(self):
-        if not self.bbox:
+        if self.bbox is None:
             return '<class "Bbox2D", Empty box>'
         if not self.boundary:
             out = '<class "Bbox2D", shape=[(%d, %d), (%d, %d)]' % (
@@ -195,7 +185,7 @@ class Bbox2D(object):
         return self.__str__()
 
     def __bool__(self):
-        if self.bbox:
+        if not self.if_empty():
             return True
         else:
             return False
@@ -225,51 +215,60 @@ class Bbox2D(object):
 
     @property
     def shape(self):
-        if not self.bbox:
+        if self.if_empty():
             return 0, 0
         return self._shape_along_axis(0), self._shape_along_axis(1)
 
     @property
     def size(self):
-        if not self.bbox:
+        if self.if_empty():
             return 0
         return self._shape_along_axis(0) * self._shape_along_axis(1)
 
     @property
     def center(self):
-        if not self.bbox:
+        if self.if_empty():
             return None
         return self._get_center()
 
     @property
     def lu(self):
-        if not self.bbox:
+        if self.if_empty():
             return None
         return self.bbox[0][0], self.bbox[1][0]
 
     @property
     def rb(self):
-        if not self.bbox:
+        if self.if_empty():
             return None
         return self.bbox[0][1], self.bbox[1][1]
 
     @property
     def ru(self):
-        if not self.bbox:
+        if self.if_empty():
             return None
         return self.bbox[0][1], self.bbox[1][0]
 
     @property
     def lb(self):
-        if not self.bbox:
+        if self.if_empty():
             return None
         return self.bbox[0][0], self.bbox[1][1]
+
+    def if_empty(self):
+        """
+        Whether this bbox is empty. True for empty bbox.
+        :return: (bool)
+        """
+        return self.bbox is None
 
     def pillow_bbox(self):
         """
         Get bbox in pillow format
         :return: [x0, y0, x1, y1]
         """
+        if self.if_empty():
+            return [0, 0, 0, 0]
         return [self.bbox[1][0], self.bbox[0][0], self.bbox[1][1], self.bbox[0][1]]
 
     def get_four_corner(self):
@@ -552,21 +551,29 @@ class Bbox2D(object):
         return _bbox_putback(dest, inbox, self.bbox)
 
     def pad(self, pad, axis=None, fix_size=False):
-        self.bbox = _box_pad(self.bbox, pad, self.boundary, axis=axis, fix_size=fix_size)
-        return self
+        if self.if_empty():
+            return empty()
+
+        out = self.copy()
+        out.bbox = _box_pad(self.bbox, pad, self.boundary, axis=axis, fix_size=fix_size)
+        return out
 
     def shift(self, value, axis=None, force=False):
+        if self.if_empty():
+            return empty()
+
         if not axis:
             if (type(value) == list or type(value) == tuple) and len(value) == 2:
                 axis = [0, 1]
             else:
                 raise Exception('Can only use default axis when shift value matched total axes!')
-        self.bbox = _box_shift(self.bbox, axis, value, self.boundary, force)
-        if not self.bbox:
-            return None
-        return self
+        out = self.copy()
+        out.bbox = _box_shift(self.bbox, axis, value, self.boundary, force)
+        return out
 
     def transpose(self):
+        if self.if_empty():
+            return empty()
         tem = Bbox2D(bbox=[self.bbox[1], self.bbox[0]], image_boundary=(self.boundary[1], self.boundary[0]))
         for att in self.attributes.keys():
             tem.__setattr__(att, self.__getattr__(att))
@@ -576,7 +583,9 @@ class Bbox2D(object):
         return (self.bbox[0][0] + self.bbox[0][1]) // 2, (self.bbox[1][0] + self.bbox[1][1]) // 2
 
     def set_shape(self, shape, center=None):
-        if not center:
+        if center is None:
+            if self.if_empty():
+                return self
             center = self.center
         new_box = [[int(center[0] - shape[0] // 2), int(center[0] + shape[0] - shape[0] // 2)],
                    [int(center[1] - shape[1] // 2), int(center[1] + shape[1] - shape[1] // 2)]]
@@ -641,7 +650,7 @@ def from_numpy(bbox, image_boundary=None, sorts=('y0', 'y1', 'x0', 'x1'), load_b
         return out_
     bbox = bbox.astype(np.int32)
     box_ = [(bbox[sorts.index('y0')], bbox[sorts.index('y1')]), (bbox[sorts.index('x0')], bbox[sorts.index('x1')])]
-    if image_boundary is not None and load_boundary_if_possible and bbox.size >= 6:
+    if image_boundary is None and load_boundary_if_possible and bbox.size >= 6:
         image_boundary = [bbox[4], bbox[5]]
     return Bbox2D(box_, image_boundary=image_boundary)
 
@@ -660,6 +669,9 @@ def list_box_to_numpy(box_list, save_image_boundary=False, attributes=tuple(), d
         width = 6 + len(attributes)
         output = np.zeros((length, width), dtype=dtype)
         for i in range(length):
+            if box_list[i].if_empty():
+                output[i, :] = -1
+                continue
             if not box_list[i].boundary:
                 raise Exception('Bbox %d have no boundary when save_image_boundary is enabled.' % i)
             output[i, 0:4] = np.array(box_list[i].bbox, dtype=dtype).ravel()
@@ -671,6 +683,9 @@ def list_box_to_numpy(box_list, save_image_boundary=False, attributes=tuple(), d
         width = 4 + len(attributes)
         output = np.zeros((length, width), dtype=dtype)
         for i in range(length):
+            if box_list[i].if_empty():
+                output[i, :] = -1
+                continue
             output[i, 0:4] = np.array(box_list[i].bbox, dtype=dtype).ravel()
             for attr, j in zip(attributes, range(4, width)):
                 output[i, j] = box_list[i].__getattr__(attr)
@@ -678,13 +693,19 @@ def list_box_to_numpy(box_list, save_image_boundary=False, attributes=tuple(), d
 
 
 def pad(box, pad, axis=None, fix_size=False):
-    box.pad(pad, axis, fix_size)
-    return box
+    return box.pad(pad, axis, fix_size)
 
 
 def shift(box, axis, value, force=False):
-    box.shift(axis, value, force)
-    return box
+    return box.shift(axis, value, force)
+
+
+def empty():
+    return Bbox2D(None, )
+
+
+def full(boundary):
+    return Bbox2D(bbox=[(0, boundary[0]), (0, boundary[1])], image_boundary=boundary)
 
 
 def nonzero(image):
@@ -730,6 +751,9 @@ def draw_bbox(image, box, boundary=None, fill=None, boundary_width=2, text=None)
     dtype = image.dtype
     if not (boundary or fill):
         raise Exception('Must choose boundary or fill or both! Otherwise will return original image!')
+
+    if box.if_empty():
+        return image
 
     if len(image.shape) == 2:
         image = np.repeat(image.reshape(image.shape + (1,)), 3, axis=2)
@@ -903,7 +927,8 @@ def projection_function_by_boxes(source_box, target_box, compose=True, max_dim=2
         foos.append(lambda x, p0=p0, ratio=ratio, p1=p1: (x - p0) * ratio + p1)
 
     if compose:
-        return lambda mat_: np.concatenate([foos[t](mat_[:, t:t + 1]) for t in range(max_dim)], axis=1)
+        return lambda mat_, dims=max_dim: torch.cat([foos[t](mat_[:, t:t + 1]) for t in range(dims)]).view(mat_.shape[::-1]).transpose(0, 1) \
+            if type(mat_) == torch.Tensor else np.concatenate([foos[t](mat_[:, t:t + 1]) for t in range(dims)], axis=1)
     return foos
 
 
