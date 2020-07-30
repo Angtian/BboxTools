@@ -154,6 +154,8 @@ class Bbox2D(object):
                 if tem < 0:
                     raise Exception('Input must be positive! Got ' + str(other))
                 self_.bbox[i] = (int(self_.bbox[i][0] * tem), int(self_.bbox[i][1] * tem))
+            if self_.boundary:
+                self_.boundary = (int(self_.boundary[0] * other[0]), int(self_.boundary[1] * other[1]))
             return self_
         else:
             raise Exception('Multiply method only support int or float input, got %s' % str(other))
@@ -606,10 +608,10 @@ class Bbox2D(object):
 
     def box_out_box(self, boxin):
         output = boxin.copy()
-        output = output.shift([0, 1], [self.bbox[0][0], self.bbox[1][0]], force=True)
+        output.set_boundary(self.boundary)
+        output = output.shift([self.bbox[0][0], self.bbox[1][0]], force=True)
         if not output:
             raise Exception('Out of boundary')
-        output.set_boundary(self.boundary)
         return output
 
     def numpy(self, save_image_boundary=True, dtype=np.float32):
@@ -883,26 +885,29 @@ def _assign_bbox(source, value, bbox, mode='numpy'):
         return
 
 
-def _box_pad(bbox, padding, boundary=None, axis=None, fix_size=False):
-    if not (type(axis) == int or type(axis) == list or type(axis) == tuple):
+def _box_pad(bbox, paddings, boundary=None, axis=None, fix_size=False):
+    if axis is None:
         axis = np.arange(len(bbox)).tolist()
 
     if type(axis) == int:
         axis = [axis]
 
+    if type(paddings) == int:
+        paddings = [paddings] * len(bbox)
+
     bbox_out = [list(temp) for temp in bbox]
     if not boundary:
-        for tem in axis:
+        for tem, padding in zip(axis, paddings):
             bbox_out[tem][0] -= padding
             bbox_out[tem][1] += padding
 
     elif not fix_size:
-        for tem in axis:
+        for tem, padding in zip(axis, paddings):
             bbox_out[tem][0] = max(0, bbox_out[tem][0] - padding)
             bbox_out[tem][1] = min(boundary[tem], bbox_out[tem][1] + padding)
 
     else:
-        for tem in axis:
+        for tem, padding in zip(axis, paddings):
             if bbox_out[tem][1] - bbox_out[tem][0] + 2 * padding >= boundary[tem]:
                 raise Exception('Unable to apply expected size')
             length = bbox_out[tem][1] - bbox_out[tem][0] + 2 * padding
