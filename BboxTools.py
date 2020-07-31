@@ -740,8 +740,8 @@ def contain_points(points, image_boundary=None):
 
 def draw_bbox(image, box, boundary=None, fill=None, boundary_width=2, text=None):
     """
-    Draw bbox on a image. IMPORTANT: input image will be changed, in order to keep original array unchange,
-    please use image.copy()
+    Draw bbox on a image. The drawn boundary will halfly placed inside the bbox while halfly outside the bbox.
+    IMPORTANT: input image will be changed, in order to keep original array unchange, please use image.copy()
     Notice current version only support ndarray.
     :param image: (ndarry) 2D image array, with size (W, H) or (W, H, C)
     :param box: (Bbox2D) box need to draw
@@ -801,13 +801,13 @@ def draw_bbox(image, box, boundary=None, fill=None, boundary_width=2, text=None)
         if not enable_PIL:
             raise Exception('To add text on bbox, PIL is required!')
         img = Image.fromarray(image)
-        draw_one_annotation(img, (box.bbox[0][0], box.bbox[1][0]), text)
+        draw_one_annotation(img, (box.bbox[0][0], box.bbox[1][0]), text, )
         image[:] = np.array(img)
 
     return image.astype(dtype)
 
 
-def draw_one_annotation(img, position, cate_s, font, backgound_color='white'):
+def draw_one_annotation(img, position, cate_s, font=ImageFont.load_default(), backgound_color='white'):
     y, x = position
     draw = ImageDraw.Draw(img)
     w, h = font.getsize(cate_s)
