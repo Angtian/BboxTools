@@ -615,6 +615,8 @@ class Bbox2D(object):
         return output
 
     def numpy(self, save_image_boundary=True, dtype=np.float32):
+        if not self.boundary:
+            save_image_boundary = False
         return list_box_to_numpy([self], save_image_boundary=save_image_boundary, dtype=dtype)[0]
 
 
@@ -707,20 +709,30 @@ def empty():
 
 
 def full(boundary):
+    if type(boundary) == np.ndarray and len(boundary.shape) > 1:
+        boundary = (boundary.shape[0], boundary.shape[1])
+    if enable_pytorch and type(boundary) == torch.Tensor and len(boundary.shape) > 1:
+        boundary = (boundary.shape[-2], boundary.shape[-1])
     return Bbox2D(bbox=[(0, boundary[0]), (0, boundary[1])], image_boundary=boundary)
 
 
 def nonzero(image):
     """
     Returns a bbox covers all non-zeros part of the image.
-    :param image: for numpy: 2-D ndarray
-                  for torch: 2-D Tensor
+    :param image: for numpy: 2-D, 3-D ndarray
+                  for torch: 2-D, 3-D, 4-D Tensor
     :return: Bbox2D with boundary
     """
     if type(image) == np.ndarray:
+        if len(image.shape) == 3:
+            image = np.max(np.abs(image), axis=2)
         non = np.nonzero(image)
         box = [(int(np.min(non[0])), int(np.max(non[0]))), (int(np.min(non[1])), int(np.max(non[1])))]
     elif enable_pytorch and type(image) == torch.Tensor:
+        if len(image.shape) == 3:
+            image = torch.max(torch.abs(image), dim=0)[0]
+        if len(image.shape) == 4:
+            image = torch.max(torch.max(torch.abs(image), dim=0)[0], dim=0)[0]
         non = torch.nonzero(image)
         box = [(int(torch.min(non[:, 0])), int(torch.max(non[:, 0]))), (int(torch.min(non[:, 1])), int(torch.max(non[:, 1])))]
     else:
@@ -933,7 +945,7 @@ def projection_function_by_boxes(source_box, target_box, compose=True, max_dim=2
 
     if compose:
         return lambda mat_, dims=max_dim: torch.cat([foos[t](mat_[:, t:t + 1]) for t in range(dims)]).view(mat_.shape[::-1]).transpose(0, 1) \
-            if type(mat_) == torch.Tensor else np.concatenate([foos[t](mat_[:, t:t + 1]) for t in range(dims)], axis=1)
+            if enable_pytorch and type(mat_) == torch.Tensor else np.concatenate([foos[t](mat_[:, t:t + 1]) for t in range(dims)], axis=1)
     return foos
 
 
