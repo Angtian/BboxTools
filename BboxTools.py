@@ -600,6 +600,7 @@ class Bbox2D(object):
 
     def box_in_box(self, boxin):
         output = boxin.copy()
+        output.boundary = None
         output = output.shift([-self.bbox[0][0], -self.bbox[1][0]], [0, 1], force=True)
         if not output:
             raise Exception('Out of boundary')
