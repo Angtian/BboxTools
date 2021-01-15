@@ -172,10 +172,10 @@ class Bbox2D(object):
         if self.bbox is None:
             return '<class "Bbox2D", Empty box>'
         if not self.boundary:
-            out = '<class "Bbox2D", shape=[(%d, %d), (%d, %d)]' % (
+            out = '<class "Bbox2D", bbox=[(%d, %d), (%d, %d)]' % (
             self.bbox[0][0], self.bbox[0][1], self.bbox[1][0], self.bbox[1][1])
         else:
-            out = '<class "Bbox2D", shape=[(%d, %d), (%d, %d)], boundary=[%d, %d]' % (
+            out = '<class "Bbox2D", bbox=[(%d, %d), (%d, %d)], boundary=[%d, %d]' % (
             self.bbox[0][0], self.bbox[0][1], self.bbox[1][0], self.bbox[1][1], self.boundary[0], self.boundary[1])
         for k in self.attributes.keys():
             if not k == 'attributes':
