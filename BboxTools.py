@@ -361,7 +361,7 @@ class Bbox2D(object):
     def _limit_to_boundary(self, boundary):
         if self.check_box(img_shape=boundary):
             return
-        output = None
+        output = self
         for i in range(2):
             if boundary[i] < self.bbox[i][1]:
                 output = self.bbox[i][1] - boundary[i]
@@ -728,14 +728,14 @@ def nonzero(image):
         if len(image.shape) == 3:
             image = np.max(np.abs(image), axis=2)
         non = np.nonzero(image)
-        box = [(int(np.min(non[0])), int(np.max(non[0]))), (int(np.min(non[1])), int(np.max(non[1])))]
+        box = [(int(np.min(non[0])), int(np.max(non[0]) + 1)), (int(np.min(non[1])), int(np.max(non[1]) + 1))]
     elif enable_pytorch and type(image) == torch.Tensor:
         if len(image.shape) == 3:
             image = torch.max(torch.abs(image), dim=0)[0]
         if len(image.shape) == 4:
             image = torch.max(torch.max(torch.abs(image), dim=0)[0], dim=0)[0]
         non = torch.nonzero(image)
-        box = [(int(torch.min(non[:, 0])), int(torch.max(non[:, 0]))), (int(torch.min(non[:, 1])), int(torch.max(non[:, 1])))]
+        box = [(int(torch.min(non[:, 0])), int(torch.max(non[:, 0]) + 1)), (int(torch.min(non[:, 1])), int(torch.max(non[:, 1]) + 1))]
     else:
         raise Exception('Unknown type of input image: %s' % type(image))
     return Bbox2D(bbox=box, image_boundary=image.shape)
