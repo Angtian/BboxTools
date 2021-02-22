@@ -308,7 +308,7 @@ class Bbox2D(object):
 
         if type(other) == np.ndarray and len(other.shape) == 2:
             return np.logical_and(np.logical_and(self.bbox[0][0] <= other[:, 0], other[:, 0] < self.bbox[0][1]), 
-                                  np.logical_and(self.bbox[0][1] <= other[:, 1], other[:, 0] < self.bbox[1][1]))
+                                  np.logical_and(self.bbox[1][0] <= other[:, 1], other[:, 1] < self.bbox[1][1]))
         
         raise Exception('Include method suppose to be point or bbox, but got %s' % str(other))
 
