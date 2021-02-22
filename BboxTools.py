@@ -287,7 +287,7 @@ class Bbox2D(object):
         """
         Check if other is inside this box. Notice include means strictly include, other could not place at the boundary
         of this bbox.
-        :param other: (Bbox2D or tuple of int) bbox or point
+        :param other: (Bbox2D or tuple of int or 2d ndarray with shape (n, 2)) bbox or point(s)
         :return: (bool) True or False
         """
         if type(other) == Bbox2D:
@@ -299,12 +299,17 @@ class Bbox2D(object):
                     out = False
             return out
 
-        if type(other) == tuple and len(other) == 2:
+        if (type(other) == tuple and len(other) == 2) or (type(other) == np.ndarray and len(other.shape) == 1):
             if other[0] < self.bbox[0][0] or other[0] >= self.bbox[0][1]:
                 return False
             if other[1] < self.bbox[1][0] or other[1] >= self.bbox[1][1]:
                 return False
             return True
+
+        if type(other) == np.ndarray and len(other.shape) == 2:
+            return np.logical_and(np.logical_and(self.bbox[0][0] <= other[:, 0], other[:, 0] < self.bbox[0][1]), 
+                                  np.logical_and(self.bbox[0][1] <= other[:, 1], other[:, 0] < self.bbox[1][1]))
+        
         raise Exception('Include method suppose to be point or bbox, but got %s' % str(other))
 
     def exclude(self, other, axis):
