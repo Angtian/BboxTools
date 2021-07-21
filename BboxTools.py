@@ -1,8 +1,26 @@
 # coding=utf-8
-# Author: Angtian Wang
-# Email: angtianwang@gmail.com
+# Copyright (c) 2019-2021 Angtian Wang
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
 
 import numpy as np
+import warnings
 
 try:
     import cv2
@@ -412,21 +430,23 @@ class Bbox2D(object):
         else:
             raise Exception('Empty boundary box!')
 
-    def apply(self, image, copy=False):
+    def apply(self, image, copy=False, allow_padding=True):
         """
         Crop image by this bbox. The output size would be: h_out, w_out = self.size.
         Examples:
-            >>> a = np.arange(9).reshape((3, 3))
-            >>> a
-            array([[0, 1, 2],
-                   [3, 4, 5],
-                   [6, 7, 8]])
-            >>> bbt.Bbox2D([(0, 2), (1, 3)]).apply(a)
-            array([[1, 2],
-                   [4, 5]])
+        >>> a = np.arange(9).reshape((3, 3))
+        >>> a
+        array([[0, 1, 2],
+               [3, 4, 5],
+               [6, 7, 8]])
+        >>> bbt.Bbox2D([(0, 2), (1, 3)]).apply(a)
+        array([[1, 2],
+               [4, 5]])
         :param image: (np.ndarray or torch.Tensor) Source image. ndarray should have shape (h, w) or (h, w, c)
-                        Tensor should have shape (h, w) or (c, h, w) or (n, c, h, w)
+                         Tensor should have shape (h, w) or (c, h, w) or (n, c, h, w)
         :param copy: (bool) Whether copy the cropped image
+        :param allow_padding: (bool) Whether pad the image when the crop box is partially outside the image,
+                         Effective only if self.boundary is None.
         :return: (np.ndarray or torch.Tensor) crop image
         """
         if type(image) == np.ndarray:
@@ -436,12 +456,27 @@ class Bbox2D(object):
         else:
             raise Exception('Image must be either np.ndarray or torch.Tensor, got %s.' % str(type(image)))
 
-        if copy:
-            if type_ == 'numpy':
-                return _apply_bbox(image, self.bbox, mode=type_).copy()
+        _check_image_size(image, self.boundary)
+
+        if type_ == 'numpy':
+            if allow_padding and self.boundary is None:
+                if copy:
+                    return _apply_pad_numpy(image, self).copy()
+                return _apply_pad_numpy(image, self)
             else:
-                return _apply_bbox(image, self.bbox, mode=type_).contiguous().clone()
-        return _apply_bbox(image, self.bbox, mode=type_)
+                if copy:
+                    return _apply_bbox_numpy(image, self.bbox).copy()
+                return _apply_bbox_numpy(image, self.bbox)
+
+        if type_ == 'torch':
+            if allow_padding and self.boundary is None:
+                if copy:
+                    return _apply_pad_torch(image, self).contiguous().clone()
+                return _apply_pad_torch(image, self)
+            else:
+                if copy:
+                    return _apply_bbox_torch(image, self.bbox).contiguous().clone()
+                return _apply_bbox_torch(image, self.bbox)
 
     def assign(self, image, value, auto_fit=True):
         """
@@ -487,8 +522,13 @@ class Bbox2D(object):
 
         :return: None
         """
-        if type(image) != type(value) and not (type(value) == int or type(value) == float):
-            raise Exception('Image type and value type are not matched, image: %s, value: %s' % (str(type(image)), str(type(value))))
+        _check_image_size(image, self.boundary)
+
+        if type(image) != type(value):
+            if type(image) == np.ndarray and (np.issubdtype(type(value), np.integer) or type(value) == (np.issubdtype(type(value), np.floating))):
+                raise Exception('Image type and value type are not matched, image: %s, value: %s' % (str(type(image)), str(type(value))))
+            if enable_pytorch and type(image) == torch.Tensor and (isinstance(type(value), int) or (isinstance(type(value), float))):
+                raise Exception('Image type and value type are not matched, image: %s, value: %s' % (str(type(image)), str(type(value))))
 
         if type(image) == np.ndarray:
             type_ = 'numpy'
@@ -643,8 +683,8 @@ def from_numpy(bbox, image_boundary=None, sorts=('y0', 'y1', 'x0', 'x1'), load_b
 
     :param bbox: (ndarray) array has shape (4, ) or (n, 4) without image boundary, or (6, ) or (n, 6) with image boundary.
     :param image_boundary: image boundary of bbox, it has higher priority than auto load boundary.
-    :param sorts: the sort of coordinate in ndarray. default: ('y0', 'y1', 'x0', 'x1').
-                  Notes: the default sort of PIL is ('x0', 'y0', 'x1', 'y1').
+    :param sorts: the sort of coordinate in ndarray, could be 'y0', 'y1', 'x0', 'x1', 'h', 'w'; 'w' alongs 'x' axis.
+                    default: ('y0', 'y1', 'x0', 'x1'). Notes: the default sort of PIL is ('x0', 'y0', 'x1', 'y1').
     :param load_boundary_if_possible: Automatically assign the boundary of the bbox if input ndarray has shape longer
                                       than 6.
     :return: Bbox2D if input ndarray is 1d array, list of Bbox2D if input ndarray is 2d array.
@@ -658,7 +698,28 @@ def from_numpy(bbox, image_boundary=None, sorts=('y0', 'y1', 'x0', 'x1'), load_b
             out_.append(from_numpy(bbox[i], image_boundary=image_boundary, sorts=sorts,
                                    load_boundary_if_possible=load_boundary_if_possible))
         return out_
+
+    if 'w' in sorts or 'h' in sorts:
+        bbox = bbox.copy()
+        new_sorts = list(sorts).copy()
+        if 'w' in sorts:
+            if 'x0' in sorts:
+                bbox[sorts.index('w')] = bbox[sorts.index('w')] + bbox[sorts.index('x0')]
+                new_sorts[sorts.index('w')] = 'x1'
+            elif 'x1' in sorts:
+                bbox[sorts.index('w')] = bbox[sorts.index('x1')] - bbox[sorts.index('w')]
+                new_sorts[sorts.index('w')] = 'x0'
+        if 'h' in sorts:
+            if 'y0' in sorts:
+                bbox[sorts.index('h')] = bbox[sorts.index('h')] + bbox[sorts.index('y0')]
+                new_sorts[sorts.index('h')] = 'y1'
+            elif 'y1' in sorts:
+                bbox[sorts.index('h')] = bbox[sorts.index('y1')] - bbox[sorts.index('h')]
+                new_sorts[sorts.index('h')] = 'y0'
+        sorts = new_sorts
+
     bbox = bbox.astype(np.int32)
+
     box_ = [(bbox[sorts.index('y0')], bbox[sorts.index('y1')]), (bbox[sorts.index('x0')], bbox[sorts.index('x1')])]
     if image_boundary is None and load_boundary_if_possible and bbox.size >= 6:
         image_boundary = [bbox[4], bbox[5]]
@@ -868,22 +929,123 @@ def _bbox_putback(whole, inbox, bbox):
     return whole
 
 
-def _apply_bbox(source, bbox, mode='numpy'):
-    if mode == 'numpy':
-        if len(source.shape) == 3:
-            get = source[bbox[0][0]:bbox[0][1], bbox[1][0]:bbox[1][1], :]
+def _check_image_size(img, boundary):
+    if boundary is None:
+        return
+    if img is None:
+        raise Exception('Illegal input: None type image!')
+    if enable_pytorch and type(img) == torch.Tensor:
+        if len(img.shape) == 2:
+            # (h, w)
+            shape_ = img.shape
+        elif len(img.shape) == 3:
+            # (c, h, w)
+            shape_ = img.shape[1::]
+        elif len(img.shape) == 4:
+            # (n, c, h, w)
+            shape_ = img.shape[2::]
         else:
-            get = source[bbox[0][0]:bbox[0][1], bbox[1][0]:bbox[1][1]]
-        return get
-    if mode == 'torch':
-        if len(source.shape) == 4:
-            get = source[:, :, bbox[0][0]:bbox[0][1], bbox[1][0]:bbox[1][1]]
-        elif len(source.shape) == 3:
-            get = source[:, bbox[0][0]:bbox[0][1], bbox[1][0]:bbox[1][1]]
+            raise Exception('Image could only be 2D (h, w), 3D (c, h, w), 4D (n, c, h, w) Tensor, but got shape' + str(img.shape))
+
+    else:
+        if len(img.shape) == 2:
+            # (h, w)
+            shape_ = img.shape
+        elif len(img.shape) == 3:
+            # (c, h, w)
+            shape_ = img.shape[0:2]
         else:
-            get = source[bbox[0][0]:bbox[0][1], bbox[1][0]:bbox[1][1]]
-        return get
-    return
+            raise Exception(
+                'Image could only be 2D (h, w), 3D (h, w, c) array, but got shape' + str(img.shape))
+
+    if shape_[0] != boundary[0] or shape_[1] != boundary[1]:
+        warnings.warn('Shape of input image %s does not fit boundary of bbox %s!' % (str(img.shape), str(boundary)))
+
+
+def _apply_bbox_numpy(source, bbox):
+    if len(source.shape) == 3:
+        get = source[bbox[0][0]:bbox[0][1], bbox[1][0]:bbox[1][1], :]
+    else:
+        get = source[bbox[0][0]:bbox[0][1], bbox[1][0]:bbox[1][1]]
+    return get
+
+
+def _apply_bbox_torch(source, bbox):
+    if len(source.shape) == 4:
+        get = source[:, :, bbox[0][0]:bbox[0][1], bbox[1][0]:bbox[1][1]]
+    elif len(source.shape) == 3:
+        get = source[:, bbox[0][0]:bbox[0][1], bbox[1][0]:bbox[1][1]]
+    else:
+        get = source[bbox[0][0]:bbox[0][1], bbox[1][0]:bbox[1][1]]
+    return get
+
+
+def _apply_pad_numpy(tar_img, box_, **kwargs):
+    out_shape = box_.shape
+
+    if out_shape[0] // 2 - box_.center[0] > 0 or out_shape[1] // 2 - box_.center[1] > 0 or out_shape[0] // 2 + box_.center[
+        0] - tar_img.shape[0] > 0 or out_shape[1] // 2 + box_.center[1] - tar_img.shape[1] > 0:
+        if len(tar_img.shape) == 2:
+            padding = (
+            (max(out_shape[0] // 2 - box_.center[0], 0), max(out_shape[0] // 2 + box_.center[0] - tar_img.shape[0], 0)),
+            (max(out_shape[1] // 2 - box_.center[1], 0), max(out_shape[1] // 2 + box_.center[1] - tar_img.shape[1], 0)))
+        elif len(tar_img.shape) == 3:
+            padding = (
+            (max(out_shape[0] // 2 - box_.center[0], 0), max(out_shape[0] // 2 + box_.center[0] - tar_img.shape[0], 0)),
+            (max(out_shape[1] // 2 - box_.center[1], 0), max(out_shape[1] // 2 + box_.center[1] - tar_img.shape[1], 0)),
+            (0, 0))
+        else:
+            raise Exception(
+            'Image could only be 2D (h, w), 3D (h, w, c) array, but got shape' + str(tar_img.shape))
+
+        img_out = np.pad(tar_img, padding, **kwargs)
+        box_ = box_.shift([padding[0][0], padding[1][0]])
+        return _apply_bbox_numpy(img_out, box_)
+    else:
+        return _apply_bbox_numpy(tar_img, box_)
+
+
+def _apply_pad_torch(tar_img, box_, **kwargs):
+    out_shape = box_.shape
+
+    if len(tar_img.shape) == 2:
+        # (h, w)
+        tar_shape = tar_img.shape
+        tar_img = tar_img.unsqueeze(0).unsqueeze(0)
+        in_dims = 2
+    elif len(tar_img.shape) == 3:
+        # (c, h, w)
+        tar_shape = tar_img.shape[1::]
+        tar_img = tar_img.unsqueeze(0)
+        in_dims = 3
+    elif len(tar_img.shape) == 4:
+        # (n, c, h, w)
+        tar_shape = tar_img.shape[2::]
+        in_dims = 4
+    else:
+        raise Exception('Image could only be 2D (h, w), 3D (c, h, w), 4D (n, c, h, w) Tensor, but got shape' + str(tar_img.shape))
+
+    if out_shape[0] // 2 - box_.center[0] > 0 or out_shape[1] // 2 - box_.center[1] > 0 or out_shape[0] // 2 + box_.center[
+        0] - tar_shape[0] > 0 or out_shape[1] // 2 + box_.center[1] - tar_shape[1] > 0:
+        # (padding_left, padding_right, padding_top, padding_bottom)
+        padding = (
+        max(out_shape[1] // 2 - box_.center[1], 0), max(out_shape[1] // 2 + box_.center[1] - tar_shape[1], 0),
+        max(out_shape[0] // 2 - box_.center[0], 0), max(out_shape[0] // 2 + box_.center[0] - tar_shape[0], 0),)
+
+        img_out = torch.nn.functional.pad(tar_img, padding, **kwargs)
+        box_ = box_.shift([padding[2], padding[0]])
+
+        get_img = _apply_bbox_torch(img_out, box_)
+
+    else:
+        get_img = _apply_bbox_torch(tar_img, box_)
+
+    if in_dims == 2:
+        return get_img.squeeze(0).squeeze(0)
+    elif in_dims == 3:
+        return get_img.squeeze(0)
+    else:
+        return get_img
 
 
 def _assign_bbox(source, value, bbox, mode='numpy'):
@@ -956,23 +1118,6 @@ def projection_function_by_boxes(source_box, target_box, compose=True, max_dim=2
 
 
 if __name__ == '__main__':
-    # set_size = 14
-    # from PIL import Image
-    # im = Image.open('vc_pool5_thr_cum_vs_coverage.png')
-    # a = np.array(im)
-    # box1 = Bbox2D([(10, 100), (50, 500)]).pad(5).shift((20, 20))
-    # get = draw_bbox(a, box1, boundary=(255, 0, 0))
-    # Image.fromarray(get).show()
-    #
-    # print(box1.apply(a).shape)
-    
-
-    a = Bbox2D([(152, 376), (8, 776)], image_boundary=[535, 813])
-    b = Bbox2D([(148, 372), (11, 810)], image_boundary=[535, 813])
-
-    a.score = 5
-    print(a)
-    print(a.transpose())
-
-    # Image.fromarray(draw_bbox(a, box, boundary=(255, 0, 255, 0.7), fill=(255, 0, 0, 0.3)).astype(np.uint8)).show()
-
+    a = box_by_shape((200, 200), (50, 50))
+    im = np.ones((100, 100))
+    print(a.apply(im).shape)
