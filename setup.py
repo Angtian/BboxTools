@@ -2,9 +2,9 @@ from setuptools import setup
 
 setup(
     name='BboxTools',
-    version='1.0.3',
+    version='1.0.4',
     packages=[''],
-    url='',
+    url='https://github.com/Angtian/BboxTools',
     license='BSD',
     author='Angtian Wang',
     author_email='angtianwang@gmail.com',
