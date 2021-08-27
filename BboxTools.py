@@ -525,9 +525,9 @@ class Bbox2D(object):
         _check_image_size(image, self.boundary)
 
         if type(image) != type(value):
-            if type(image) == np.ndarray and (np.issubdtype(type(value), np.integer) or type(value) == (np.issubdtype(type(value), np.floating))):
+            if type(image) == np.ndarray and not (np.issubdtype(type(value), np.integer) or (np.issubdtype(type(value), np.floating))):
                 raise Exception('Image type and value type are not matched, image: %s, value: %s' % (str(type(image)), str(type(value))))
-            if enable_pytorch and type(image) == torch.Tensor and (isinstance(type(value), int) or (isinstance(type(value), float))):
+            if enable_pytorch and type(image) == torch.Tensor and not (isinstance(type(value), int) or (isinstance(type(value), float))):
                 raise Exception('Image type and value type are not matched, image: %s, value: %s' % (str(type(image)), str(type(value))))
 
         if type(image) == np.ndarray:
